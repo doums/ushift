@@ -5,7 +5,7 @@ CLI tool to manage CPU performance scaling and power profiles
 ## Install
 
 - GH [releases](https://github.com/doums/ushift/releases/latest)
-- _COMING SOON_ AUR https://aur.archlinux.org/packages/ushift
+- AUR https://aur.archlinux.org/packages/ushift
 
 ## Quick start
 
@@ -172,6 +172,23 @@ energy_perf_policy = "balance_performance"
 turbo_boost = true
 hwp_dyn_boost = true # Intel only
 ```
+
+#### Oneshot profile switch/tweak
+
+```sh
+sudo ushift sav  # switch to (power)save profile
+sudo ushift set -t yes  # enable turbo boost
+```
+
+---
+
+## References
+
+- https://docs.kernel.org/admin-guide/pm/cpufreq.html
+- https://docs.kernel.org/admin-guide/pm/intel_pstate.html
+- https://docs.kernel.org/admin-guide/pm/amd-pstate.html
+- https://wiki.archlinux.org/title/CPU_frequency_scaling
+- https://github.com/linrunner/TLP
 
 ## License
 
