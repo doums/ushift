@@ -48,13 +48,11 @@ pub const Ushift = struct {
                 if (props.xe_power_profile) |xe| gpu.?.printXePowerProfile(xe.gpu_index) catch {};
             },
             .set => |props| {
-                // TODO
-                // try hasRoot();
+                try hasRoot();
                 err_hit = self.runBatch(&props, &gpu);
             },
             .set_profile => |opt| {
-                // TODO
-                // try hasRoot();
+                try hasRoot();
                 const profile = switch (opt.profile) {
                     .performance => config.performance,
                     .balance => config.balance,
@@ -80,8 +78,7 @@ pub const Ushift = struct {
                 // ie. on desktop
             },
             .daemon => |flags| {
-                // TODO
-                // try hasRoot();
+                try hasRoot();
                 var d = try Daemon.init(_gpa, _io, .{
                     .cpu = &self.cpu,
                     .gpu = if (gpu) |*g| g else null,
@@ -169,6 +166,6 @@ pub const Ushift = struct {
 fn hasRoot() !void {
     if (std.os.linux.geteuid() != 0) {
         std.log.err("root privileges missing", .{});
-        return error.PermissionDenied;
+        return error.RootRequired;
     }
 }
