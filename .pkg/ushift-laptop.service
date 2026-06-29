@@ -1,0 +1,16 @@
+[Unit]
+Description=Run ushift as daemon
+After=sysinit.target udev.target
+StartLimitBurst=5
+StartLimitIntervalSec=60s
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/ushift laptop
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=5s
+User=root
+
+[Install]
+WantedBy=multi-user.target

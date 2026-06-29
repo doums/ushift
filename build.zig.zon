@@ -1,0 +1,21 @@
+.{
+    .name = .ushift,
+    .version = "0.1.0",
+    .fingerprint = 0x8904f1896af0f1a3,
+    .minimum_zig_version = "0.17.0-dev.305+bdfbf432d",
+    .dependencies = .{
+        .toml = .{
+            .url = "git+https://github.com/sam701/zig-toml#de542063f104e0ffb87bef19c55131ab0fbbc0b7",
+            .hash = "toml-0.3.0-bV14BaWMAQBmIxIiAqiMID-5sOpd41iZHrGCz0_fYUOh",
+        },
+        .clap = .{
+            .url = "git+https://github.com/Hejsil/zig-clap#e91d66b1abba2024cd2e816426f14d233d3dad9a",
+            .hash = "clap-0.12.0-oBajB2LpAQD1BQpAukHcuwhIUoHWYNy2DzU6lDW2v2N8",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}

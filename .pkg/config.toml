@@ -1,0 +1,25 @@
+# battery device name to be used in /sys/class/power_supply/
+# (only needed if multiple batteries are present)
+# bat_name = "BAT0"
+# bat_poll_rate = 30   # battery polling interval in seconds
+# low_level = 20       # battery % at which 'save' profile activates
+# gpu_index = 0        # Intel Xe gpu only for now
+
+[performance]
+energy_perf_policy = "balance_performance"
+turbo_boost = true
+# hwp_dyn_boost = true       # Intel only
+# xe_power_profile = "base"  # Intel Xe gpu only
+
+[balance]
+energy_perf_policy = "balance_power"
+turbo_boost = true
+# hwp_dyn_boost = true
+# xe_power_profile = "base"
+
+# optional - if omitted, the 'save' profile is disabled
+[save]
+energy_perf_policy = "power"
+turbo_boost = false
+# hwp_dyn_boost = false
+# xe_power_profile = "power_saving"

@@ -1,0 +1,12 @@
+[Unit]
+Description=Set ushift performance profile
+After=sysinit.target udev.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/ushift perf
+User=root
+
+[Install]
+WantedBy=multi-user.target

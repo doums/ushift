@@ -1,0 +1,137 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Tag name for the release'
+        required: false
+        default: dev
+      publish:
+        type: boolean
+        description: Publish Release
+        required: true
+        default: false
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-arch:
+    name: Build Arch Linux (x86_64)
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:base-devel
+      options: --privileged
+
+    env:
+      ARTIFACT_DIR: artifact
+      BINARY_NAME: ushift-linux-x86_64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Update system
+        run: |
+          pacman -Syu --noconfirm
+
+      - name: Install libudev
+        run: |
+          pacman -S --noconfirm systemd-libs
+
+      - name: Install Zig master
+        uses: mlugg/setup-zig@v2
+        with:
+          version: master
+
+      - name: Build
+        run: |
+          zig build -Doptimize=ReleaseSmall --search-prefix /usr
+          ls -lh zig-out/bin/
+
+      - name: Prepare artifacts
+        run: |
+          mkdir -p ${{ env.ARTIFACT_DIR }}
+          cp zig-out/bin/ushift ${{ env.ARTIFACT_DIR }}/${{ env.BINARY_NAME }}
+          cd ${{ env.ARTIFACT_DIR }}
+          sha256sum ${{ env.BINARY_NAME }} > ${{ env.BINARY_NAME }}.sha256sum
+          ls -lh
+
+      - name: Print build info
+        run: |
+          echo '--------------------------------------------'
+          echo "binary name: ${{ env.BINARY_NAME }}"
+          echo "sha256sum: $(cat ${{ env.ARTIFACT_DIR }}/${{ env.BINARY_NAME }}.sha256sum)"
+          echo "file size: $(du -h ${{ env.ARTIFACT_DIR }}/${{ env.BINARY_NAME }} | cut -f1)"
+          echo '--------------------------------------------'
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: ushift-linux-x86_64
+          path: ${{ env.ARTIFACT_DIR }}
+          retention-days: 7
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.publish == true
+    name: Create GitHub Release
+    needs: build-arch
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download artifact
+        uses: actions/download-artifact@v6
+        with:
+          name: ushift-linux-x86_64
+          path: release-assets
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ inputs.tag_name || github.ref_name }}
+          tag_name: ${{ inputs.tag_name || github.ref_name }}
+          draft: false
+          files: |
+            release-assets/*
+
+  aur-publish:
+    # TODO
+    # if: startsWith(github.ref, 'refs/tags/v')
+    if: false
+    name: Publish AUR package
+    needs: release
+    runs-on: ubuntu-latest
+    env:
+      PKGBUILD: ./.pkg/arch/PKGBUILD
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Update PKGBUILD
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          # strip v prefix
+          version="${RELEASE_TAG#v}"
+          # ⚠ Dashes are not allowed in package version, replace any - by _
+          pkgver=${version//-/_}
+          echo "pkgver: $pkgver"
+          # update pkgver
+          sed -i "s/pkgver=.*/pkgver=$pkgver/" ${{ env.PKGBUILD }}
+          echo '--------------------------------------------'
+          cat ${{ env.PKGBUILD }}
+
+      - name: Publish
+        uses: KSXGitHub/github-actions-deploy-aur@v4.1.2
+        with:
+          pkgname: ushift
+          pkgbuild: ${{ env.PKGBUILD }}
+          updpkgsums: true
+          commit_username: ${{ secrets.AUR_USERNAME }}
+          commit_email: ${{ secrets.AUR_EMAIL }}
+          ssh_private_key: ${{ secrets.AUR_SSH_KEY }}
+          commit_message: ${{ github.ref_name }}
