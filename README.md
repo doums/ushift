@@ -83,7 +83,7 @@ hwp_dyn_boost = false
 > [!TIP]
 > Use `-c <FILE>` to specify a custom config file
 
-Print the active config
+Print the parsed config
 
 ```sh
 ushift cfg
