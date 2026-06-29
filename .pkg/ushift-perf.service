@@ -1,6 +1,5 @@
 [Unit]
 Description=Set ushift performance profile
-After=sysinit.target udev.target
 
 [Service]
 Type=oneshot
