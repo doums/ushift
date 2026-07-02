@@ -131,7 +131,12 @@ switches profiles based on power state:
 - **save** - on battery below `battery_low` % (only if `save` is defined in config)
 
 > [!NOTE]
-> CLI flags take precedence over config file properties.
+> CLI flags override equivalent config file properties.
+
+> [!NOTE]
+> ushift uses libudev to detect AC power changes, so battery
+> info doesn't need frequent polling. Default rate is 30 seconds
+> (`--poll-rate`) so CPU footprint is minimal.
 
 ```sh
 sudo ushift laptop
@@ -212,7 +217,15 @@ sudo ushift set -e power  # set Energy Performance Policy to 'power'
 sudo ushift sav  # switch to (power)save profile
 ```
 
----
+## Implementation details
+
+ushift is a lightweight wrapper around sysfs: reads and writes the
+kernel's `cpufreq`/`intel_pstate`/`amd_pstate`/DRM files directly.
+No background process except in `laptop` mode.
+
+Laptop mode detects AC changes via `libudev` netlink uevents combined
+with `ppoll`, blocking efficiently instead of busy-polling. Battery
+level is only checked on a timer when a `save` profile is configured.
 
 ## References
 
