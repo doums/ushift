@@ -25,14 +25,16 @@ pub const Config = struct {
 
         const path = config_path orelse default_config_file;
         std.log.debug("config file '{s}'", .{path});
-        checkFile(io, path) catch |err| {
-            std.log.err("failed to open config file '{s}': {s}", .{ path, @errorName(err) });
-            return error.ConfigFileOpen;
-        };
 
-        const result = parser.parseFile(io, path) catch |err| {
-            std.log.err("failed to parse config file '{s}': {s}", .{ path, @errorName(err) });
-            return error.ConfigFileParse;
+        const result = parser.parseFile(io, path) catch |err| switch (err) {
+            error.FileNotFound => {
+                std.log.err("failed to open config file '{s}': {s}", .{ path, @errorName(err) });
+                return error.ConfigFileOpen;
+            },
+            else => {
+                std.log.err("failed to parse config file '{s}': {s}", .{ path, @errorName(err) });
+                return error.ConfigFileParse;
+            },
         };
 
         return Config{
@@ -53,8 +55,3 @@ pub const Config = struct {
     }
 };
 
-fn checkFile(io: std.Io, path: []const u8) !void {
-    const cwd = std.Io.Dir.cwd();
-    const file = try cwd.openFile(io, path, .{ .allow_directory = false });
-    defer file.close(io);
-}

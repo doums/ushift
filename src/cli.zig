@@ -41,7 +41,7 @@ pub const GetCpuProps = struct {
         gpu_index: ?u32 = null,
     } = null,
 
-    fn default(comptime graphics: bool) GetCpuProps {
+    fn default(comptime graphics: bool, gpu_index: ?u32) GetCpuProps {
         return GetCpuProps{
             .driver = true,
             .op_mode = true,
@@ -49,8 +49,8 @@ pub const GetCpuProps = struct {
             .energy_perf_policy = true,
             .turbo_boost = true,
             .hwp_dyn_boost = true,
-            .intel_xe_power_profile = if (graphics) .{ .gpu_index = null } else null,
-            .radeon_dpm_perf_level = if (graphics) .{ .gpu_index = null } else null,
+            .intel_xe_power_profile = if (graphics) .{ .gpu_index = gpu_index } else null,
+            .radeon_dpm_perf_level = if (graphics) .{ .gpu_index = gpu_index } else null,
         };
     }
 };
@@ -63,11 +63,11 @@ pub const SetCpuProps = struct {
     hwp_dyn_boost: ?bool = null,
     intel_xe_power_profile: ?struct {
         profile: gpu.XePowerProfile = .base,
-        gpu_index: ?u32,
+        gpu_index: ?u32 = null,
     } = null,
     radeon_dpm_perf_level: ?struct {
         level: gpu.UserRadeonDpmPerfLevel = .auto,
-        gpu_index: ?u32,
+        gpu_index: ?u32 = null,
     } = null,
 };
 
@@ -327,9 +327,7 @@ fn get(io: std.Io, gpa: std.mem.Allocator, iter: *std.process.Args.Iterator) !Pa
 
     var props: GetCpuProps = .{};
     if (res.args.all != 0) {
-        props = GetCpuProps.default(true);
-        props.intel_xe_power_profile.?.gpu_index = res.args.@"gpu-index";
-        props.radeon_dpm_perf_level.?.gpu_index = res.args.@"gpu-index";
+        props = GetCpuProps.default(true, res.args.@"gpu-index");
         return .{ .get = props };
     }
     if (res.args.driver != 0) {
@@ -361,7 +359,7 @@ fn get(io: std.Io, gpa: std.mem.Allocator, iter: *std.process.Args.Iterator) !Pa
         };
     }
     if (!hasFieldSet(props)) {
-        props = GetCpuProps.default(false);
+        props = GetCpuProps.default(false, null);
     }
     return .{ .get = props };
 }

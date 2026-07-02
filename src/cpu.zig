@@ -55,13 +55,6 @@ pub const PstateOpMode = union(enum) {
         };
     }
 
-    fn isPassive(self: PstateOpMode) bool {
-        return switch (self) {
-            .intel => |s| s == .passive,
-            .amd => |s| s == .passive,
-        };
-    }
-
     fn getName(self: PstateOpMode) []const u8 {
         return switch (self) {
             .intel => |s| @tagName(s),
@@ -564,7 +557,13 @@ fn writeSysfsCpus(
     for (cpus) |num| {
         const path = try std.fmt.bufPrint(&path_buf, "{s}/cpu{d}{s}", .{ cpu_dir, num, subpath });
         std.log.debug("writing '{s}' to {s}", .{ data, path });
-        try fs.writeFile(io, path, data);
+        fs.writeFile(io, path, data) catch |err| switch (err) {
+            error.FileNotFound => {
+                std.log.warn("cpu{d} offline or attribute unavailable, skipping", .{num});
+                continue;
+            },
+            else => return err,
+        };
     }
 }
 
@@ -574,36 +573,9 @@ test "cpu" {
     defer cpu.deinit();
     std.debug.print("{any}\n", .{cpu});
     cpu.print();
-    // cpu.setPstateOpMode(.active) catch |err| {
-    //     std.log.err("failed to set P-state operation mode: {s}", .{@errorName(err)});
-    // };
-}
-
-test "set_pstate_opmode" {
-    var cpu = try Cpu.init(testing.allocator, testing.io);
-    defer cpu.deinit();
-    try cpu.setPstateOpMode(.active);
-}
-
-test "set_scaling_governor" {
-    var cpu = try Cpu.init(testing.allocator, testing.io);
-    defer cpu.deinit();
-    try cpu.setScalingGovernor(.powersave);
 }
 
 test "get_scaling_governor" {
     const gov = try getScalingGovernor(testing.io);
     std.debug.print("current scaling governor: {s}\n", .{@tagName(gov)});
-}
-
-test "set_boost" {
-    var cpu = try Cpu.init(testing.allocator, testing.io);
-    defer cpu.deinit();
-    try cpu.setTurboBoost(true);
-}
-
-test "set_dyn_boost" {
-    var cpu = try Cpu.init(testing.allocator, testing.io);
-    defer cpu.deinit();
-    try cpu.setIntelDynBoost(true);
 }

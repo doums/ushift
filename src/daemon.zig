@@ -25,14 +25,14 @@ pub const Daemon = struct {
     performance_profile: *const Profile,
     balance_profile: *const Profile,
     save_profile: ?*const Profile,
+    // state
+    ac_online: bool,
+    bat_cap: u32 = 100,
+    bat_low: bool,
 
     const Self = @This();
     var _gpa: std.mem.Allocator = undefined;
     var _io: std.Io = undefined;
-    // state
-    var _ac_online = false;
-    var _battery_level: u32 = 100;
-    var _low_battery = false;
 
     pub fn init(gpa: std.mem.Allocator, io: std.Io, data: struct {
         cpu: *const Cpu,
@@ -48,7 +48,7 @@ pub const Daemon = struct {
         const ps = try pws.getPowerSupply(gpa, io, true);
         var user_bat: ?[]u8 = null;
         errdefer {
-            gpa.free(ps.bat);
+            if (user_bat == null) gpa.free(ps.bat);
             gpa.free(ps.ac);
             if (user_bat) |v| gpa.free(v);
         }
@@ -69,22 +69,21 @@ pub const Daemon = struct {
         // init AC state
         const ac_online = try pws.readAcOnline(io, ps.ac);
         std.log.debug("AC online: {}", .{ac_online});
-        _ac_online = ac_online;
 
         if (data.gpu.cards.len == 0) {
             std.log.warn("no GPU card found", .{});
         } else for (data.gpu.cards) |card| card.print(.{ .logger = .log });
 
+        var bat_cap: u32 = 100;
+        var bat_low = false;
         if (cfg.save) |_| {
             // init battery level state
-            const bat_cap = try pws.readBatteryCapacity(io, battery, cap_prefix);
-            const low_battery = bat_cap <= low_level;
+            bat_cap = try pws.readBatteryCapacity(io, battery, cap_prefix);
+            bat_low = bat_cap <= low_level;
             std.log.debug("battery low: {} (low level: {d}%)", .{
-                low_battery,
+                bat_low,
                 low_level,
             });
-            _battery_level = bat_cap;
-            _low_battery = low_battery;
         } else {
             std.log.info("no save profile defined in config, ignoring battery level", .{});
         }
@@ -101,6 +100,9 @@ pub const Daemon = struct {
             .performance_profile = &cfg.performance,
             .balance_profile = &cfg.balance,
             .save_profile = if (cfg.save) |*save| save else null,
+            .ac_online = ac_online,
+            .bat_cap = bat_cap,
+            .bat_low = bat_low,
         };
     }
 
@@ -119,7 +121,7 @@ pub const Daemon = struct {
             null;
 
         // init before entering the loop, so we don't have to wait for the first tick
-        try self.switchProfile(_ac_online, _low_battery);
+        try self.switchProfile(self.ac_online, self.bat_low);
 
         installSigHandler();
 
@@ -144,11 +146,11 @@ pub const Daemon = struct {
 
             // on udev event -> new AC state
             const online = try udev.getAcOnline() orelse continue;
-            if (_ac_online != online) {
+            if (self.ac_online != online) {
                 std.log.info("AC online: {}", .{online});
-                _ac_online = online;
+                self.ac_online = online;
                 if (self.save_profile) |_| try self.refreshBatteryLevel();
-                self.switchProfile(online, _low_battery) catch |err| {
+                self.switchProfile(online, self.bat_low) catch |err| {
                     std.log.err("failed to switch profile: {s}", .{@errorName(err)});
                     return err;
                 };
@@ -156,17 +158,17 @@ pub const Daemon = struct {
         }
     }
 
-    fn handleTick(self: *const Self) !void {
-        const level = try pws.readBatteryCapacity(_io, self.bat, self.sysfs_cap_prefix);
-        if (_battery_level != level) {
-            std.log.debug("battery level: {d}% -> {d}%", .{ _battery_level, level });
-            _battery_level = level;
+    fn handleTick(self: *Self) !void {
+        const capacity = try pws.readBatteryCapacity(_io, self.bat, self.sysfs_cap_prefix);
+        if (self.bat_cap != capacity) {
+            std.log.debug("battery level: {d}% -> {d}%", .{ self.bat_cap, capacity });
+            self.bat_cap = capacity;
         }
-        const low_battery = level <= self.low_level;
-        if (_low_battery != low_battery) {
-            std.log.info("battery low: {} -> {}", .{ _low_battery, low_battery });
-            _low_battery = low_battery;
-            self.switchProfile(_ac_online, low_battery) catch |err| {
+        const bat_low = capacity <= self.low_level;
+        if (self.bat_low != bat_low) {
+            std.log.info("battery low: {} -> {}", .{ self.bat_low, bat_low });
+            self.bat_low = bat_low;
+            self.switchProfile(self.ac_online, bat_low) catch |err| {
                 std.log.err("failed to switch profile: {s}", .{@errorName(err)});
                 return err;
             };
@@ -200,8 +202,8 @@ pub const Daemon = struct {
 
     fn refreshBatteryLevel(self: *Self) !void {
         const level = try pws.readBatteryCapacity(_io, self.bat, self.sysfs_cap_prefix);
-        _battery_level = level;
-        _low_battery = level <= self.low_level;
+        self.bat_cap = level;
+        self.bat_low = level <= self.low_level;
     }
 
     pub fn deinit(self: *const Self) void {

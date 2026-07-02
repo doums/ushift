@@ -26,11 +26,8 @@ pub const ProcInfo = struct {
 
     const Self = @This();
 
-    // static lifetime, cleared after parsing
-    var props: ProcInfoMap = undefined;
-
     pub fn parse(gpa: std.mem.Allocator, io: std.Io, vendor: cpu.Vendor) !ProcInfo {
-        props = ProcInfoMap.init(.{});
+        var props: ProcInfoMap = ProcInfoMap.init(.{});
         defer {
             // those are useless after parsing
             if (props.get(.cpu_cores)) |v| {

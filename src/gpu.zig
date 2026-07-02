@@ -119,7 +119,9 @@ pub const Gpu = struct {
         }
         if (gpu_index) |idx| {
             const card = self.findCard(idx) orelse {
-                std.log.err("GPU card{d} not found", .{idx});
+                const indexes = try self.getCardIndexes();
+                defer _gpa.free(indexes);
+                std.log.err("GPU card{d} not found, available card index: {s}", .{ idx, indexes });
                 return error.GpuBadIndex;
             };
             switch (driver) {
@@ -395,8 +397,9 @@ test "intel_xe_power_profiles" {
     testing.allocator.free(profiles);
 }
 
-test "set_xe_power_profile" {
+test "driver_action" {
     var gpu = try Gpu.init(testing.allocator, testing.io);
     defer gpu.deinit();
-    try gpu.setXePowerProfile(.base, 0);
+    try gpu.driverAction(.xe, .print, null);
+    // try gpu.driverAction(.amd, .print, null);
 }
