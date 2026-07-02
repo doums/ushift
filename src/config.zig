@@ -8,10 +8,9 @@ const Profile = @import("cli.zig").Profile;
 const default_config_file = "/etc/ushift/config.toml";
 
 pub const UserConfig = struct {
-    low_level: u8 = 20,
-    bat_poll_rate: u32 = 30, // sec
-    bat_name: ?[]const u8 = null, // sysfs device name, e.g. BAT0, BAT1, etc.
-    gpu_index: u32 = 0,
+    battery_low: u8 = 20,
+    battery_poll_rate: u32 = 30, // sec
+    battery_name: ?[]const u8 = null, // sysfs device name, e.g. BAT0, BAT1, etc.
     performance: Profile = Profile.default(.performance),
     balance: Profile = Profile.default(.balance),
     save: ?Profile = null,

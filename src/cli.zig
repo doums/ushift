@@ -34,9 +34,25 @@ pub const GetCpuProps = struct {
     energy_perf_policy: ?bool = null,
     turbo_boost: ?bool = null,
     hwp_dyn_boost: ?bool = null,
-    xe_power_profile: ?struct {
-        gpu_index: u32 = 0,
+    intel_xe_power_profile: ?struct {
+        gpu_index: ?u32 = null,
     } = null,
+    radeon_dpm_perf_level: ?struct {
+        gpu_index: ?u32 = null,
+    } = null,
+
+    fn default(comptime graphics: bool) GetCpuProps {
+        return GetCpuProps{
+            .driver = true,
+            .op_mode = true,
+            .scaling_governor = true,
+            .energy_perf_policy = true,
+            .turbo_boost = true,
+            .hwp_dyn_boost = true,
+            .intel_xe_power_profile = if (graphics) .{ .gpu_index = null } else null,
+            .radeon_dpm_perf_level = if (graphics) .{ .gpu_index = null } else null,
+        };
+    }
 };
 
 pub const SetCpuProps = struct {
@@ -45,18 +61,22 @@ pub const SetCpuProps = struct {
     energy_perf_policy: ?cpu.EnergyPerfPolicy = null,
     turbo_boost: ?bool = null,
     hwp_dyn_boost: ?bool = null,
-    xe_power_profile: ?struct {
+    intel_xe_power_profile: ?struct {
         profile: gpu.XePowerProfile = .base,
-        gpu_index: u32 = 0,
+        gpu_index: ?u32,
+    } = null,
+    radeon_dpm_perf_level: ?struct {
+        level: gpu.UserRadeonDpmPerfLevel = .auto,
+        gpu_index: ?u32,
     } = null,
 };
 
 pub const DaemonProps = struct {
     config_file: ?[]const u8 = null,
+    dry_run: bool = false,
     bat_name: ?[]const u8 = null,
-    low_level: ?u8 = null,
+    bat_low: ?u8 = null,
     poll_rate: ?u32 = null,
-    gpu_index: ?u32 = null,
 };
 
 pub const Parsed = union(enum) {
@@ -83,7 +103,8 @@ pub const Profile = struct {
     governor: ?cpu.ScalingGovernor,
     pstate_op_mode: ?cpu.GenericPstateOpMode,
     energy_perf_policy: ?cpu.EnergyPerfPolicy,
-    xe_power_profile: ?gpu.XePowerProfile, // Intel only
+    intel_xe_power_profile: ?gpu.XePowerProfile, // Intel Xe gpus only
+    radeon_dpm_perf_level: ?gpu.UserRadeonDpmPerfLevel, // AMD gpus only
     turbo_boost: ?bool,
     hwp_dyn_boost: ?bool, // Intel only
 
@@ -96,7 +117,8 @@ pub const Profile = struct {
                 .balance => .balance_power,
                 .save => .power,
             },
-            .xe_power_profile = null,
+            .intel_xe_power_profile = null,
+            .radeon_dpm_perf_level = null,
             .turbo_boost = switch (profile) {
                 .save => false,
                 else => true,
@@ -118,13 +140,13 @@ const main_params = clap.parseParamsComptime(
 );
 
 const main_help =
-    \\CLI tool to manage CPU performance scaling and power profiles
+    \\CLI tool to manage performance scaling and power profiles
     \\
     \\Usage: ushift [OPTIONS] [COMMAND]
     \\
     \\Commands:
-    \\  get       Get cpu settings
-    \\  set       Set cpu settings (root required)
+    \\  get       Get scaling settings
+    \\  set       Set scaling settings (root required)
     \\  perf, performance
     \\            Apply the 'performance' profile (root required)
     \\  bal, balance
@@ -254,11 +276,16 @@ const YesNo = enum {
 
 fn get(io: std.Io, gpa: std.mem.Allocator, iter: *std.process.Args.Iterator) !Parsed {
     const help =
-        \\Get CPU scaling properties
+        \\Get CPU/GPU scaling properties
         \\
         \\Usage: ushift get [OPTIONS]
         \\
         \\Options:
+        \\
+    ;
+
+    const options =
+        \\  -A, --all           Print all properties
         \\  -D, --driver        Print the scaling driver
         \\  -o, --op-mode       Print the P-state driver operation mode
         \\  -g, --scaling-governor
@@ -268,23 +295,13 @@ fn get(io: std.Io, gpa: std.mem.Allocator, iter: *std.process.Args.Iterator) !Pa
         \\  -t, --turbo         Print turbo boost status
         \\  -d, --dyn-boost     Print Intel HWP dynamic boost status
         \\  -x, --xe-power-profile
-        \\        Print the Xe (i)GPU power profile (Intel xe driver only)
-        \\  -G, --gpu-index <INDEX>
-        \\        Set the GPU index for the --xe-power-profile option (default: 0)
-        \\  -h, --help          Print help
-        \\
-    ;
-
-    const options =
-        \\  -D, --driver
-        \\  -o, --op-mode
-        \\  -g, --scaling-governor
-        \\  -e, --energy-perf-policy
-        \\  -t, --turbo
-        \\  -d, --dyn-boost
-        \\  -x, --xe-power-profile
+        \\        Print the Xe power profile (Intel gpus with Xe driver only)
+        \\  -r, --radeon-dpm-perf-level
+        \\        Print the Radeon DPM performance level (AMD gpus only)
         \\  -G, --gpu-index <GPU_INDEX>
-        \\  -h, --help
+        \\        Use a specific GPU card index, to be used with other gpu flags (default: auto-detect)
+        \\        Example: -G1 for /sys/class/drm/card1
+        \\  -h, --help          Print help
         \\
     ;
 
@@ -304,11 +321,17 @@ fn get(io: std.Io, gpa: std.mem.Allocator, iter: *std.process.Args.Iterator) !Pa
     defer res.deinit();
 
     if (res.args.help != 0) {
-        std.debug.print("{s}\n", .{help});
+        std.debug.print("{s}{s}\n", .{ help, options });
         return .noop;
     }
 
     var props: GetCpuProps = .{};
+    if (res.args.all != 0) {
+        props = GetCpuProps.default(true);
+        props.intel_xe_power_profile.?.gpu_index = res.args.@"gpu-index";
+        props.radeon_dpm_perf_level.?.gpu_index = res.args.@"gpu-index";
+        return .{ .get = props };
+    }
     if (res.args.driver != 0) {
         props.driver = true;
     }
@@ -328,16 +351,24 @@ fn get(io: std.Io, gpa: std.mem.Allocator, iter: *std.process.Args.Iterator) !Pa
         props.hwp_dyn_boost = true;
     }
     if (res.args.@"xe-power-profile" != 0) {
-        props.xe_power_profile = .{
-            .gpu_index = res.args.@"gpu-index" orelse 0,
+        props.intel_xe_power_profile = .{
+            .gpu_index = res.args.@"gpu-index",
         };
+    }
+    if (res.args.@"radeon-dpm-perf-level" != 0) {
+        props.radeon_dpm_perf_level = .{
+            .gpu_index = res.args.@"gpu-index",
+        };
+    }
+    if (!hasFieldSet(props)) {
+        props = GetCpuProps.default(false);
     }
     return .{ .get = props };
 }
 
 fn set(io: std.Io, gpa: std.mem.Allocator, iter: *std.process.Args.Iterator) !Parsed {
     const help =
-        \\Set CPU scaling properties (requires root)
+        \\Set CPU/GPU scaling properties (requires root)
         \\
         \\Usage: ushift set [OPTIONS]
         \\
@@ -357,10 +388,14 @@ fn set(io: std.Io, gpa: std.mem.Allocator, iter: *std.process.Args.Iterator) !Pa
         \\  -t, --turbo <yes|no>        Set turbo boost
         \\  -d, --dyn-boost <yes|no>    Set Intel HWP dynamic boost
         \\  -x, --xe-power-profile <PROFILE>
-        \\        Set the Xe (i)GPU power profile (Intel xe driver only), possible values:
-        \\        base, power_saving
-        \\  -G, --gpu-index <INDEX>
-        \\        Set the GPU index for the --xe-power-profile option (default: 0)
+        \\        Set the Xe power profile (Intel gpus with Xe driver only),
+        \\        possible values: base, power_saving
+        \\  -r, --radeon-dpm-perf-level <LEVEL>
+        \\        Set the Radeon DPM performance level (AMD gpus only), possible values:
+        \\        auto, low, high
+        \\  -G, --gpu-index <GPU_INDEX>
+        \\        Use a specific GPU card index, to be used with other gpu flags (default: auto-detect)
+        \\        Example: -G1 for /sys/class/drm/card1
         \\  -h, --help          Print help
         \\
     ;
@@ -372,6 +407,7 @@ fn set(io: std.Io, gpa: std.mem.Allocator, iter: *std.process.Args.Iterator) !Pa
         \\  -t, --turbo <BOOST>
         \\  -d, --dyn-boost <DYNBOOST>
         \\  -x, --xe-power-profile <XE_PROFILE>
+        \\  -r, --radeon-dpm-perf-level <DPM_LEVEL>
         \\  -G, --gpu-index <GPU_INDEX>
         \\  -h, --help
         \\
@@ -385,6 +421,7 @@ fn set(io: std.Io, gpa: std.mem.Allocator, iter: *std.process.Args.Iterator) !Pa
         .BOOST = clap.parsers.enumeration(YesNo),
         .DYNBOOST = clap.parsers.enumeration(YesNo),
         .XE_PROFILE = clap.parsers.enumeration(gpu.XePowerProfile),
+        .DPM_LEVEL = clap.parsers.enumeration(gpu.UserRadeonDpmPerfLevel),
         .GPU_INDEX = clap.parsers.int(u32, 10),
     };
     var diag = clap.Diagnostic{};
@@ -420,10 +457,21 @@ fn set(io: std.Io, gpa: std.mem.Allocator, iter: *std.process.Args.Iterator) !Pa
         props.hwp_dyn_boost = boost.asBool();
     }
     if (res.args.@"xe-power-profile") |profile| {
-        props.xe_power_profile = .{
+        props.intel_xe_power_profile = .{
             .profile = profile,
-            .gpu_index = res.args.@"gpu-index" orelse 0,
+            .gpu_index = res.args.@"gpu-index",
         };
+    }
+    if (res.args.@"radeon-dpm-perf-level") |level| {
+        props.radeon_dpm_perf_level = .{
+            .level = level,
+            .gpu_index = res.args.@"gpu-index",
+        };
+    }
+    if (!hasFieldSet(props)) {
+        std.debug.print("No argument given\n", .{});
+        try printUsage(io, &params, "set");
+        return error.MissingArgument;
     }
     return .{ .set = props };
 }
@@ -440,7 +488,7 @@ fn laptop(
         \\switches profiles:
         \\ - 'performance' -> on AC power
         \\ - 'balance'     -> on battery
-        \\ - 'save'        -> on battery below `low_level` %
+        \\ - 'save'        -> on battery below `battery_low` %
         \\   (only if [save] is defined in config)
         \\
         \\Usage: ushift laptop [OPTIONS]
@@ -454,16 +502,14 @@ fn laptop(
         \\              Set the battery device name to use,
         \\              e.g. "BAT0" for /sys/class/power_supply/BAT0
         \\              (only needed if multiple batteries are present)
-        \\  -l, --low-level <BAT_LEVEL>
-        \\              Set the battery percentage below which the 'save' profile
-        \\              is applied
+        \\  -l, --bat-low <BAT_LEVEL>
+        \\              Set the battery percentage below which the 'save' profile activates
         \\              Expected values: 0-100 (%) (default: 20)
         \\  -r, --poll-rate <POLLRATE>
         \\              Set the battery polling interval in seconds (default: 30)
-        \\  -g, --gpu-index <GPU_INDEX>
-        \\              Set the GPU index for the --xe-power-profile option
         \\  -L, --log-level <LOG_LEVEL>
         \\              Set the log level, possible values: debug, info, warn, err
+        \\  -d, --dry-run         Run in dry-run mode (no changes applied)
         \\  -c, --config <FILE>   Path to config file (default: /etc/ushift/config.toml)
         \\  -h, --help            Print help
         \\
@@ -475,7 +521,6 @@ fn laptop(
         .BATNAME = clap.parsers.string,
         .BAT_LEVEL = clap.parsers.int(u8, 10),
         .POLLRATE = clap.parsers.int(u32, 10),
-        .GPU_INDEX = clap.parsers.int(u32, 10),
         .LOG_LEVEL = clap.parsers.enumeration(std.log.Level),
     };
 
@@ -500,10 +545,10 @@ fn laptop(
 
     return .{ .daemon = .{
         .config_file = res.args.config,
+        .dry_run = res.args.@"dry-run" != 0,
         .bat_name = res.args.@"bat-name",
-        .low_level = res.args.@"low-level",
+        .bat_low = res.args.@"bat-low",
         .poll_rate = res.args.@"poll-rate",
-        .gpu_index = res.args.@"gpu-index",
     } };
 }
 
@@ -646,19 +691,30 @@ fn report(diag: clap.Diagnostic, err: anyerror) void {
         longest.name = diag.arg;
 
     switch (err) {
-        error.DoesntTakeValue => std.log.err(
-            "The argument '{s}{s}' does not take a value",
+        error.DoesntTakeValue => std.debug.print(
+            "The argument '{s}{s}' does not take a value\n",
             .{ longest.kind.prefix(), longest.name },
         ),
-        error.MissingValue => std.log.err(
-            "The argument '{s}{s}' requires a value but none was supplied",
+        error.MissingValue => std.debug.print(
+            "The argument '{s}{s}' requires a value but none was supplied\n",
             .{ longest.kind.prefix(), longest.name },
         ),
-        error.InvalidArgument => std.log.err(
-            "Invalid argument '{s}{s}'",
+        error.InvalidArgument => std.debug.print(
+            "Invalid argument '{s}{s}'\n",
             .{ longest.kind.prefix(), longest.name },
         ),
-        error.NameNotPartOfEnum => std.log.err("Invalid command", .{}),
-        else => std.log.err("Error while parsing arguments: {s}", .{@errorName(err)}),
+        error.NameNotPartOfEnum => std.debug.print("Invalid command\n", .{}),
+        else => std.debug.print("Error while parsing arguments: {s}\n", .{@errorName(err)}),
     }
+}
+
+fn hasFieldSet(self: anytype) bool {
+    const T = @TypeOf(self);
+    const tinfo = @typeInfo(T).@"struct";
+    inline for (tinfo.field_names, tinfo.field_types) |name, ty| {
+        if (@typeInfo(ty) != .optional)
+            @compileError("hasFieldSet: field '" ++ name ++ "' of " ++ @typeName(T) ++ " not optional");
+        if (@field(self, name) != null) return true;
+    }
+    return false;
 }

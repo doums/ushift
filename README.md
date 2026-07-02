@@ -41,6 +41,18 @@ sudo ushift set -t yes  # enable turbo boost
 sudo ushift set -d yes  # enable HWP dynamic boost (Intel only)
 ```
 
+Get/set GPU scaling properties
+
+```sh
+# on Intel gpus with Xe driver
+ushift get -x
+sudo ushift set -x power_saving
+
+# on AMD gpus
+ushift get -r
+sudo ushift set -r low
+```
+
 Apply a profile as defined in the config file (see below) - **root required**
 
 ```sh
@@ -54,30 +66,50 @@ sudo ushift sav   # save (low power)
 Default: `/etc/ushift/config.toml`
 
 ```toml
-# battery device name to be used in /sys/class/power_supply/
-# (only needed if multiple batteries are present)
-# bat_name = "BAT0"
-# bat_poll_rate = 30   # battery polling interval in seconds
-# low_level = 20       # battery % at which 'save' profile activates
+## Battery device name to be used in /sys/class/power_supply/
+## Only needed if multiple batteries are present, otherwise it is
+## detected automatically
+# battery_name = "BAT0"
+## Battery polling interval in seconds
+# battery_poll_rate = 30
+## Battery % at which 'save' profile activates
+# battery_low = 20
+
+# See `ushift set -h` to get more information about the available
+# options
 
 [performance]
-# governor = "powersave"  # scaling governor
-# pstate_op_mode  = "active"  # P-state driver operation mode
+## If you understand the implications, you can override the kernel
+## defaults for scaling governor and P-state operation mode
+# governor = "powersave"
+# pstate_op_mode  = "active"
+## Energy Performance Policy, possible values: performance,
+## balance_performance, default, balance_power, power
 energy_perf_policy = "balance_performance"
+## Turbo boost
 turbo_boost = true
-hwp_dyn_boost = true  # Intel only
-# xe_power_profile = "base"  # Intel Xe gpu only, base or power_saving
+## Intel HWP dynamic boost
+# hwp_dyn_boost = true
+## Intel gpus with Xe driver, possible values: base, power_saving
+# intel_xe_power_profile = "base"
+## AMD gpus DPM performance level, possible values:
+## auto, low, high
+# radeon_dpm_perf_level = "auto"
 
 [balance]
 energy_perf_policy = "balance_power"
 turbo_boost = true
-hwp_dyn_boost = true
+# hwp_dyn_boost = true
+# intel_xe_power_profile = "base"
+# radeon_dpm_perf_level = "auto"
 
 # optional - if omitted, the 'save' profile is disabled
 [save]
 energy_perf_policy = "power"
 turbo_boost = false
-hwp_dyn_boost = false
+# hwp_dyn_boost = false
+# intel_xe_power_profile = "power_saving"
+# radeon_dpm_perf_level = "low"
 ```
 
 > [!TIP]
@@ -96,7 +128,7 @@ switches profiles based on power state:
 
 - **performance** - on AC power
 - **balance** - on battery
-- **save** - on battery below `low_level` % (only if `[save]` is defined in config)
+- **save** - on battery below `battery_low` % (only if `save` is defined in config)
 
 > [!NOTE]
 > CLI flags take precedence over config file properties.
@@ -136,12 +168,12 @@ ExecStart=/usr/bin/ushift laptop --config /path/to/config.toml
 
 ## Example use cases
 
-#### Laptop with auto-switch profiles, power saving below 30% battery
+#### Laptop with auto-switch profiles, power saving below 15% battery
 
 Enable/start `ushift-laptop.service` with config:
 
 ```toml
-low_level = 30 # %
+battery_low = 15 # %
 
 # on AC
 [performance]
@@ -155,7 +187,7 @@ energy_perf_policy = "balance_power"
 turbo_boost = true
 hwp_dyn_boost = false
 
-# on battery below 30%
+# on battery powersave mode
 [save]
 energy_perf_policy = "power"
 turbo_boost = false
@@ -173,11 +205,11 @@ turbo_boost = true
 hwp_dyn_boost = true # Intel only
 ```
 
-#### Oneshot profile switch/tweak
+#### Oneshot tweak/profile switch
 
 ```sh
+sudo ushift set -e power  # set Energy Performance Policy to 'power'
 sudo ushift sav  # switch to (power)save profile
-sudo ushift set -t yes  # enable turbo boost
 ```
 
 ---
@@ -187,6 +219,8 @@ sudo ushift set -t yes  # enable turbo boost
 - https://docs.kernel.org/admin-guide/pm/cpufreq.html
 - https://docs.kernel.org/admin-guide/pm/intel_pstate.html
 - https://docs.kernel.org/admin-guide/pm/amd-pstate.html
+- https://docs.kernel.org/gpu/xe/index.html
+- https://docs.kernel.org/gpu/amdgpu/thermal.html
 - https://wiki.archlinux.org/title/CPU_frequency_scaling
 - https://github.com/linrunner/TLP
 

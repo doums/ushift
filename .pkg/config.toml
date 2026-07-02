@@ -1,25 +1,44 @@
-# battery device name to be used in /sys/class/power_supply/
-# (only needed if multiple batteries are present)
-# bat_name = "BAT0"
-# bat_poll_rate = 30   # battery polling interval in seconds
-# low_level = 20       # battery % at which 'save' profile activates
-# gpu_index = 0        # Intel Xe gpu only for now
+## Battery device name to be used in /sys/class/power_supply/
+## Only needed if multiple batteries are present, otherwise it is
+## detected automatically
+# battery_name = "BAT0"
+## Battery polling interval in seconds
+# battery_poll_rate = 30
+## Battery % at which 'save' profile activates
+# battery_low = 20
+
+# See `ushift set -h` to get more information about the available
+# options
 
 [performance]
+## If you understand the implications, you can override the kernel
+## defaults for scaling governor and P-state operation mode
+# governor = "powersave"
+# pstate_op_mode  = "active"
+## Energy Performance Policy, possible values: performance,
+## balance_performance, default, balance_power, power
 energy_perf_policy = "balance_performance"
+## Turbo boost
 turbo_boost = true
-# hwp_dyn_boost = true       # Intel only
-# xe_power_profile = "base"  # Intel Xe gpu only
+## Intel HWP dynamic boost
+# hwp_dyn_boost = true
+## Intel gpus with Xe driver, possible values: base, power_saving
+# intel_xe_power_profile = "base"
+## AMD gpus DPM performance level, possible values:
+## auto, low, high
+# radeon_dpm_perf_level = "auto"
 
 [balance]
 energy_perf_policy = "balance_power"
 turbo_boost = true
 # hwp_dyn_boost = true
-# xe_power_profile = "base"
+# intel_xe_power_profile = "base"
+# radeon_dpm_perf_level = "auto"
 
 # optional - if omitted, the 'save' profile is disabled
 [save]
 energy_perf_policy = "power"
 turbo_boost = false
 # hwp_dyn_boost = false
-# xe_power_profile = "power_saving"
+# intel_xe_power_profile = "power_saving"
+# radeon_dpm_perf_level = "low"

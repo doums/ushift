@@ -12,15 +12,16 @@ const Cpu = @import("cpu.zig").Cpu;
 const Gpu = @import("gpu.zig").Gpu;
 
 pub const Daemon = struct {
+    dry_run: bool = false,
+    // ------
     cpu: *const Cpu,
-    gpu: ?*const Gpu,
+    gpu: *const Gpu,
     // ------
     bat: []u8, // sysfs device name
     ac: []u8,
     sysfs_cap_prefix: pws.BatteryCapacityPrefix,
     poll_timeout: u32,
     low_level: u32,
-    gpu_index: u32,
     performance_profile: *const Profile,
     balance_profile: *const Profile,
     save_profile: ?*const Profile,
@@ -35,7 +36,7 @@ pub const Daemon = struct {
 
     pub fn init(gpa: std.mem.Allocator, io: std.Io, data: struct {
         cpu: *const Cpu,
-        gpu: ?*const Gpu,
+        gpu: *const Gpu,
         flags: DaemonProps,
         config: *const UserConfig,
     }) !Self {
@@ -52,24 +53,15 @@ pub const Daemon = struct {
             if (user_bat) |v| gpa.free(v);
         }
 
-        if (flags.bat_name orelse cfg.bat_name) |bat| {
+        if (flags.bat_name orelse cfg.battery_name) |bat| {
             if (!try pws.checkUserBattery(io, bat)) return error.InvalidUserBattery;
             // let's clone it so we can free later without caring
             user_bat = try gpa.dupe(u8, bat);
             gpa.free(ps.bat);
         }
         const battery = user_bat orelse ps.bat;
-        const low_level = flags.low_level orelse cfg.low_level;
+        const low_level = flags.bat_low orelse cfg.battery_low;
         std.log.info("using battery: {s}", .{battery});
-
-        const gpu_index = flags.gpu_index orelse cfg.gpu_index;
-        if (data.gpu) |gpu| {
-            const card = gpu.getCard(gpu_index);
-            if (card) |c| std.log.info("GPU{d} driver {s}", .{
-                c.id,
-                if (c.driver) |drv| @tagName(drv) else "no driver",
-            }) else std.log.warn("GPU{d} not found", .{gpu_index});
-        }
 
         const cap_prefix = try pws.getBatteryCapacityPrefix(io, battery);
         std.log.debug("sysfs battery capacity prefix: {s}", .{@tagName(cap_prefix)});
@@ -78,6 +70,10 @@ pub const Daemon = struct {
         const ac_online = try pws.readAcOnline(io, ps.ac);
         std.log.debug("AC online: {}", .{ac_online});
         _ac_online = ac_online;
+
+        if (data.gpu.cards.len == 0) {
+            std.log.warn("no GPU card found", .{});
+        } else for (data.gpu.cards) |card| card.print(.{ .logger = .log });
 
         if (cfg.save) |_| {
             // init battery level state
@@ -94,14 +90,14 @@ pub const Daemon = struct {
         }
 
         return Daemon{
+            .dry_run = flags.dry_run,
             .cpu = data.cpu,
             .gpu = data.gpu,
             .bat = battery,
             .ac = ps.ac,
             .sysfs_cap_prefix = cap_prefix,
-            .poll_timeout = flags.poll_rate orelse cfg.bat_poll_rate,
+            .poll_timeout = flags.poll_rate orelse cfg.battery_poll_rate,
             .low_level = low_level,
-            .gpu_index = gpu_index,
             .performance_profile = &cfg.performance,
             .balance_profile = &cfg.balance,
             .save_profile = if (cfg.save) |*save| save else null,
@@ -194,10 +190,12 @@ pub const Daemon = struct {
     }
 
     fn setCpuAndGpuProfile(self: *const Self, profile: *const Profile) !void {
-        try self.cpu.setProfile(profile);
-        if (self.gpu) |g| {
-            try g.setProfile(profile, self.gpu_index);
+        if (self.dry_run) {
+            std.log.info("[DRY-RUN] would set profile: {any}", .{profile});
+            return;
         }
+        try self.cpu.setProfile(profile);
+        try self.gpu.setProfile(profile);
     }
 
     fn refreshBatteryLevel(self: *Self) !void {

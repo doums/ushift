@@ -1,6 +1,6 @@
 .{
     .name = .ushift,
-    .version = "0.1.0",
+    .version = "0.1.1",
     .fingerprint = 0x8904f1896af0f1a3,
     .minimum_zig_version = "0.17.0-dev.305+bdfbf432d",
     .dependencies = .{
