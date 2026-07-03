@@ -140,13 +140,13 @@ const main_params = clap.parseParamsComptime(
 );
 
 const main_help =
-    \\CLI tool to manage performance scaling and power profiles
+    \\CLI tool to manage CPU performance scaling and power profiles
     \\
     \\Usage: ushift [OPTIONS] [COMMAND]
     \\
     \\Commands:
-    \\  get       Get scaling settings
-    \\  set       Set scaling settings (root required)
+    \\  get       Get cpu scaling properties
+    \\  set       Set cpu scaling properties (root required)
     \\  perf, performance
     \\            Apply the 'performance' profile (root required)
     \\  bal, balance
@@ -156,7 +156,7 @@ const main_help =
     \\  cpu       Print cpu info
     \\  gpu       Print gpu info
     \\  pows      Print power supply info (battery/AC)
-    \\  cfg       Print config file
+    \\  cfg       Print parsed config file (debug)
     \\  laptop    Run ushift in laptop mode (root required)
     \\
     \\Options:
@@ -222,9 +222,9 @@ fn setProfile(
     var help_buf: [256]u8 = undefined;
     const profile_str = @tagName(profile);
     const help = try std.fmt.bufPrint(&help_buf,
-        \\Set CPU '{s}' profile as defined in the config file (requires root)
+        \\Set '{s}' profile as defined in the config file (requires root)
         \\
-        \\Usage: ushift [OPTIONS] {s}
+        \\Usage: ushift {s} [OPTIONS]
         \\
         \\Options:
         \\
@@ -253,7 +253,7 @@ fn setProfile(
     defer res.deinit();
 
     if (res.args.help != 0) {
-        std.debug.print("{s}{s}\n", .{ help, options });
+        std.debug.print("{s}{s}", .{ help, options });
         return .noop;
     }
     return .{ .set_profile = .{
@@ -276,7 +276,7 @@ const YesNo = enum {
 
 fn get(io: std.Io, gpa: std.mem.Allocator, iter: *std.process.Args.Iterator) !Parsed {
     const help =
-        \\Get CPU/GPU scaling properties
+        \\Get CPU scaling properties
         \\
         \\Usage: ushift get [OPTIONS]
         \\
@@ -295,9 +295,9 @@ fn get(io: std.Io, gpa: std.mem.Allocator, iter: *std.process.Args.Iterator) !Pa
         \\  -t, --turbo         Print turbo boost status
         \\  -d, --dyn-boost     Print Intel HWP dynamic boost status
         \\  -x, --xe-power-profile
-        \\        Print the Xe power profile (Intel gpus with Xe driver only)
+        \\        Print the Xe power profile (Intel GPUs with Xe driver only)
         \\  -r, --radeon-dpm-perf-level
-        \\        Print the Radeon DPM performance level (AMD gpus only)
+        \\        Print the Radeon DPM performance level (AMD GPUs only)
         \\  -G, --gpu-index <GPU_INDEX>
         \\        Use a specific GPU card index, to be used with other gpu flags (default: auto-detect)
         \\        Example: -G1 for /sys/class/drm/card1
@@ -321,7 +321,7 @@ fn get(io: std.Io, gpa: std.mem.Allocator, iter: *std.process.Args.Iterator) !Pa
     defer res.deinit();
 
     if (res.args.help != 0) {
-        std.debug.print("{s}{s}\n", .{ help, options });
+        std.debug.print("{s}{s}", .{ help, options });
         return .noop;
     }
 
@@ -366,7 +366,7 @@ fn get(io: std.Io, gpa: std.mem.Allocator, iter: *std.process.Args.Iterator) !Pa
 
 fn set(io: std.Io, gpa: std.mem.Allocator, iter: *std.process.Args.Iterator) !Parsed {
     const help =
-        \\Set CPU/GPU scaling properties (requires root)
+        \\Set CPU scaling properties (requires root)
         \\
         \\Usage: ushift set [OPTIONS]
         \\
@@ -386,10 +386,10 @@ fn set(io: std.Io, gpa: std.mem.Allocator, iter: *std.process.Args.Iterator) !Pa
         \\  -t, --turbo <yes|no>        Set turbo boost
         \\  -d, --dyn-boost <yes|no>    Set Intel HWP dynamic boost
         \\  -x, --xe-power-profile <PROFILE>
-        \\        Set the Xe power profile (Intel gpus with Xe driver only),
+        \\        Set the Xe power profile (Intel GPUs with Xe driver only),
         \\        possible values: base, power_saving
         \\  -r, --radeon-dpm-perf-level <LEVEL>
-        \\        Set the Radeon DPM performance level (AMD gpus only), possible values:
+        \\        Set the Radeon DPM performance level (AMD GPUs only), possible values:
         \\        auto, low, high
         \\  -G, --gpu-index <GPU_INDEX>
         \\        Use a specific GPU card index, to be used with other gpu flags (default: auto-detect)
@@ -434,7 +434,7 @@ fn set(io: std.Io, gpa: std.mem.Allocator, iter: *std.process.Args.Iterator) !Pa
     defer res.deinit();
 
     if (res.args.help != 0) {
-        std.debug.print("{s}\n", .{help});
+        std.debug.print(help, .{});
         return .noop;
     }
 
@@ -534,7 +534,7 @@ fn laptop(
     defer res.deinit();
 
     if (res.args.help != 0) {
-        std.debug.print("{s}{s}\n", .{ help, options });
+        std.debug.print("{s}{s}", .{ help, options });
         return .noop;
     }
     if (res.args.@"log-level") |level| {
@@ -556,11 +556,12 @@ fn showConfig(
     iter: *std.process.Args.Iterator,
 ) !Parsed {
     const help =
-        \\Print config file
+        \\Print parsed config file (debug)
         \\
         \\Usage: ushift cfg [OPTIONS]
         \\
         \\Options:
+        \\
     ;
 
     const options =
@@ -586,7 +587,7 @@ fn showConfig(
     defer res.deinit();
 
     if (res.args.help != 0) {
-        std.debug.print("{s}\n{s}\n", .{ help, options });
+        std.debug.print("{s}{s}", .{ help, options });
         return .noop;
     }
     return .{ .showcfg = .{ .file = res.args.config } };
@@ -627,7 +628,7 @@ fn info(
     defer res.deinit();
 
     if (res.args.help != 0) {
-        std.debug.print("{s}{s}\n", .{ help, options });
+        std.debug.print("{s}{s}", .{ help, options });
         return .noop;
     }
 
@@ -665,7 +666,7 @@ fn powerSupply(io: std.Io, gpa: std.mem.Allocator, iter: *std.process.Args.Itera
     defer res.deinit();
 
     if (res.args.help != 0) {
-        std.debug.print("{s}{s}\n", .{ help, options });
+        std.debug.print("{s}{s}", .{ help, options });
         return .noop;
     }
 
