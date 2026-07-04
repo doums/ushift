@@ -129,13 +129,13 @@ pub const Profile = struct {
 };
 
 const main_parsers = .{
-    .command = clap.parsers.enumeration(Command),
+    .CMD = clap.parsers.enumeration(Command),
 };
 
 const main_params = clap.parseParamsComptime(
     \\-h, --help           Print help
     \\-v, --version        Print version
-    \\<command>
+    \\<CMD>
     \\
 );
 
@@ -180,9 +180,9 @@ pub fn cli(args: std.process.Args, io: std.Io, gpa: std.mem.Allocator) !Parsed {
         .allocator = gpa,
         .terminating_positional = 0,
     }) catch |err| {
-        report(diag, err);
+        report(diag, err, .{ .top_level = true });
         try printUsage(io, &main_params, null);
-        return err;
+        return parseErrOut(err);
     };
     defer res.deinit();
 
@@ -246,9 +246,9 @@ fn setProfile(
         .diagnostic = &diag,
         .allocator = gpa,
     }) catch |err| {
-        report(diag, err);
+        report(diag, err, .{});
         try printUsage(io, &params, profile_str);
-        return err;
+        return parseErrOut(err);
     };
     defer res.deinit();
 
@@ -314,9 +314,9 @@ fn get(io: std.Io, gpa: std.mem.Allocator, iter: *std.process.Args.Iterator) !Pa
         .diagnostic = &diag,
         .allocator = gpa,
     }) catch |err| {
-        report(diag, err);
+        report(diag, err, .{});
         try printUsage(io, &params, "get");
-        return err;
+        return parseErrOut(err);
     };
     defer res.deinit();
 
@@ -427,9 +427,9 @@ fn set(io: std.Io, gpa: std.mem.Allocator, iter: *std.process.Args.Iterator) !Pa
         .diagnostic = &diag,
         .allocator = gpa,
     }) catch |err| {
-        report(diag, err);
+        report(diag, err, .{});
         try printUsage(io, &params, "set");
-        return err;
+        return parseErrOut(err);
     };
     defer res.deinit();
 
@@ -467,9 +467,9 @@ fn set(io: std.Io, gpa: std.mem.Allocator, iter: *std.process.Args.Iterator) !Pa
         };
     }
     if (!hasFieldSet(props)) {
-        std.debug.print("No argument given\n", .{});
+        std.log.err("no option given", .{});
         try printUsage(io, &params, "set");
-        return error.MissingArgument;
+        return error.ParseCaught;
     }
     return .{ .set = props };
 }
@@ -527,9 +527,9 @@ fn laptop(
         .diagnostic = &diag,
         .allocator = gpa,
     }) catch |err| {
-        report(diag, err);
+        report(diag, err, .{});
         try printUsage(io, &params, "laptop");
-        return err;
+        return parseErrOut(err);
     };
     defer res.deinit();
 
@@ -580,9 +580,9 @@ fn showConfig(
         .diagnostic = &diag,
         .allocator = gpa,
     }) catch |err| {
-        report(diag, err);
+        report(diag, err, .{});
         try printUsage(io, &params, "cfg");
-        return err;
+        return parseErrOut(err);
     };
     defer res.deinit();
 
@@ -621,9 +621,9 @@ fn info(
         .diagnostic = &diag,
         .allocator = gpa,
     }) catch |err| {
-        report(diag, err);
+        report(diag, err, .{});
         try printUsage(io, &params, @tagName(component));
-        return err;
+        return parseErrOut(err);
     };
     defer res.deinit();
 
@@ -659,9 +659,9 @@ fn powerSupply(io: std.Io, gpa: std.mem.Allocator, iter: *std.process.Args.Itera
         .diagnostic = &diag,
         .allocator = gpa,
     }) catch |err| {
-        report(diag, err);
+        report(diag, err, .{});
         try printUsage(io, &params, "pows");
-        return err;
+        return parseErrOut(err);
     };
     defer res.deinit();
 
@@ -673,38 +673,77 @@ fn powerSupply(io: std.Io, gpa: std.mem.Allocator, iter: *std.process.Args.Itera
     return .power_supply;
 }
 
-fn printUsage(io: std.Io, params: anytype, subcmd: ?[]const u8) !void {
-    if (subcmd) |cmd| {
-        std.debug.print("Usage: {s} {s} ", .{ bin_name, cmd });
+fn printUsage(io: std.Io, params: anytype, comptime command: ?[]const u8) !void {
+    var buf: [1024]u8 = undefined;
+    var writer = std.Io.File.stderr().writer(io, &buf);
+    const w = &writer.interface;
+    if (command) |cmd| {
+        try w.print("→ {s} {s} ", .{ bin_name, cmd });
     } else {
-        std.debug.print("Usage: {s} ", .{bin_name});
+        try w.print("→ {s} ", .{bin_name});
     }
-    try clap.usageToFile(io, .stdout(), clap.Help, params);
-    std.debug.print("\n", .{});
+    try clap.usage(w, clap.Help, params);
+    try w.writeByte('\n');
+    try w.flush();
 }
 
 // based on https://hejsil.github.io/zig-clap/#test.Diagnostic.report
-fn report(diag: clap.Diagnostic, err: anyerror) void {
+fn report(
+    diag: clap.Diagnostic,
+    err: anyerror,
+    comptime opt: struct { top_level: bool = false },
+) void {
     var longest = diag.name.longest();
     if (longest.kind == .positional)
         longest.name = diag.arg;
 
     switch (err) {
-        error.DoesntTakeValue => std.debug.print(
-            "The argument '{s}{s}' does not take a value\n",
+        error.DoesntTakeValue => std.log.err(
+            "the option '{s}{s}' does not take a value",
             .{ longest.kind.prefix(), longest.name },
         ),
-        error.MissingValue => std.debug.print(
-            "The argument '{s}{s}' requires a value but none was supplied\n",
+        error.MissingValue => std.log.err(
+            "the option '{s}{s}' requires a value",
             .{ longest.kind.prefix(), longest.name },
         ),
-        error.InvalidArgument => std.debug.print(
-            "Invalid argument '{s}{s}'\n",
-            .{ longest.kind.prefix(), longest.name },
-        ),
-        error.NameNotPartOfEnum => std.debug.print("Invalid command\n", .{}),
-        else => std.debug.print("Error while parsing arguments: {s}\n", .{@errorName(err)}),
+        error.InvalidArgument => switch (longest.kind) {
+            .positional => std.log.err(
+                "invalid argument '{s}'",
+                .{longest.name},
+            ),
+            .long, .short => std.log.err(
+                "invalid option '{s}{s}'",
+                .{ longest.kind.prefix(), longest.name },
+            ),
+        },
+        error.NameNotPartOfEnum => if (opt.top_level) {
+            std.log.err("invalid command", .{});
+        } else {
+            std.log.err("invalid option value", .{});
+        },
+        // int parser errors
+        error.InvalidCharacter,
+        error.Overflow,
+        => std.log.err("invalid numeric value", .{}),
+        else => std.log.err("arguments parsing failed: {s}", .{@errorName(err)}),
     }
+}
+
+/// Merge and map user caught parse errors so main can filter them
+fn parseErrOut(
+    err: anyerror,
+) anyerror {
+    return switch (err) {
+        error.DoesntTakeValue,
+        error.MissingValue,
+        error.InvalidArgument,
+        error.NameNotPartOfEnum,
+        // int parser errors
+        error.InvalidCharacter,
+        error.Overflow,
+        => error.ParseCaught,
+        else => err,
+    };
 }
 
 fn hasFieldSet(self: anytype) bool {

@@ -15,16 +15,17 @@ pub const std_options: std.Options = .{
     .log_level = .debug,
 };
 
-pub fn main(init: std.process.Init) !void {
+pub fn main(init: std.process.Init) !u8 {
     // WIP in dev use this allocator
     // const gpa = init.gpa;
     const gpa = init.arena.allocator();
 
-    const parsed = try cli.cli(init.minimal.args, init.io, gpa);
+    const parsed = cli.cli(init.minimal.args, init.io, gpa) catch |err|
+        return if (err == error.ParseCaught) 1 else err;
     std.log.debug("cli parsed: {any}", .{parsed});
 
     if (parsed == .noop) {
-        return;
+        return 0;
     }
 
     const config = switch (parsed) {
@@ -37,7 +38,7 @@ pub fn main(init: std.process.Init) !void {
 
     if (parsed == .showcfg) {
         config.?.print();
-        return;
+        return 0;
     }
 
     var ushift = try Ushift.init(gpa, init.io);
@@ -45,4 +46,6 @@ pub fn main(init: std.process.Init) !void {
 
     const userconf = if (config) |conf| conf.get() else cfg.UserConfig{};
     try ushift.dispatch(parsed, &userconf);
+
+    return 0;
 }
