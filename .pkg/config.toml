@@ -6,6 +6,12 @@
 # battery_poll_rate = 30
 ## Battery % at which 'save' profile activates
 # battery_low = 20
+## Battery charge thresholds (%) to limit max charge for battery longevity
+## Requires sysfs support (varies by hardware)
+# battery_start_charge_threshold = 80
+# battery_end_charge_threshold = 85
+## Restore configured charge thresholds when AC is unplugged (default: true)
+# restore_charge_thresholds_on_bat = true
 
 # See `ushift set -h` to get more information about the available
 # options

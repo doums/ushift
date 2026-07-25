@@ -11,6 +11,10 @@ pub const UserConfig = struct {
     battery_low: u8 = 20,
     battery_poll_rate: u32 = 30, // sec
     battery_name: ?[]const u8 = null, // sysfs device name, e.g. BAT0, BAT1, etc.
+    battery_start_charge_threshold: ?u32 = null,
+    battery_end_charge_threshold: ?u32 = null,
+    // restore configured charge thresholds when AC is unplugged
+    restore_charge_thresholds_on_bat: bool = true,
     performance: Profile = Profile.default(.performance),
     balance: Profile = Profile.default(.balance),
     save: ?Profile = null,
@@ -54,4 +58,3 @@ pub const Config = struct {
         self.parsed.deinit();
     }
 };
-

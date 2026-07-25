@@ -79,15 +79,24 @@ pub const DaemonProps = struct {
     poll_rate: ?u32 = null,
 };
 
+pub const PowerSupplyProps = union(enum) {
+    print,
+    set_charge_thresholds: struct {
+        start: u32,
+        end: u32,
+        bat_name: ?[]const u8 = null,
+    },
+};
+
 pub const Parsed = union(enum) {
     info: enum { cpu, gpu },
-    power_supply,
     get: GetCpuProps,
     set: SetCpuProps,
     set_profile: struct {
         profile: CpuProfile,
         config_file: ?[]const u8,
     },
+    power_supply: PowerSupplyProps,
     showcfg: struct { file: ?[]const u8 },
     daemon: DaemonProps,
     noop,
@@ -155,7 +164,7 @@ const main_help =
     \\            Apply the 'save' profile (root required)
     \\  cpu       Print cpu info
     \\  gpu       Print gpu info
-    \\  pows      Print power supply info (battery/AC)
+    \\  pows      Get/Set power supply properties (battery/AC)
     \\  cfg       Print parsed config file (debug)
     \\  laptop    Run ushift in laptop mode (root required)
     \\
@@ -497,9 +506,9 @@ fn laptop(
 
     const options =
         \\  -b, --bat-name <BATNAME>
-        \\              Set the battery device name to use,
-        \\              e.g. "BAT0" for /sys/class/power_supply/BAT0
-        \\              (only needed if multiple batteries are present)
+        \\              Set a specific battery device to use
+        \\              Example: "BAT1" for /sys/class/power_supply/BAT1
+        \\              (may be needed when multiple batteries are present)
         \\  -l, --bat-low <BAT_LEVEL>
         \\              Set the battery percentage below which the 'save' profile activates
         \\              Expected values: 0-100 (%) (default: 20)
@@ -641,21 +650,36 @@ fn info(
 fn powerSupply(io: std.Io, gpa: std.mem.Allocator, iter: *std.process.Args.Iterator) !Parsed {
     const help =
         \\Print power supply info (battery/AC)
+        \\Set battery charge thresholds (if supported by HW) (root required)
         \\
         \\Usage: ushift pows [OPTIONS]
         \\
         \\Options:
+        \\  -t, --charge-thresholds <START_THRESHOLD>,<END_THRESHOLD>
+        \\            Set battery charge thresholds, 0..100 (%)
+        \\            Example: -t 75,80 sets start threshold to 75%, end threshold to 80%
+        \\  -b, --bat-name <BATNAME>
+        \\            Set a specific battery device to use for setting charge thresholds
+        \\            Example: "BAT1" for /sys/class/power_supply/BAT1
+        \\            (may be needed when multiple batteries are present)
+        \\  -h, --help    Print help
         \\
     ;
 
     const options =
+        \\  -t, --charge-thresholds <THRESHOLDS>
+        \\  -b, --bat-name <BATNAME>
         \\  -h, --help    Print help
         \\
     ;
 
     const params = comptime clap.parseParamsComptime(options);
+    const parsers = comptime .{
+        .THRESHOLDS = twoIntsParser,
+        .BATNAME = clap.parsers.string,
+    };
     var diag = clap.Diagnostic{};
-    var res = clap.parseEx(clap.Help, &params, clap.parsers.default, iter, .{
+    var res = clap.parseEx(clap.Help, &params, parsers, iter, .{
         .diagnostic = &diag,
         .allocator = gpa,
     }) catch |err| {
@@ -666,11 +690,20 @@ fn powerSupply(io: std.Io, gpa: std.mem.Allocator, iter: *std.process.Args.Itera
     defer res.deinit();
 
     if (res.args.help != 0) {
-        std.debug.print("{s}{s}", .{ help, options });
+        std.debug.print("{s}", .{help});
         return .noop;
     }
+    if (res.args.@"charge-thresholds") |thresholds| {
+        return .{ .power_supply = .{
+            .set_charge_thresholds = .{
+                .start = thresholds.a,
+                .end = thresholds.b,
+                .bat_name = res.args.@"bat-name",
+            },
+        } };
+    }
 
-    return .power_supply;
+    return .{ .power_supply = .print };
 }
 
 fn printUsage(io: std.Io, params: anytype, comptime command: ?[]const u8) !void {
@@ -755,4 +788,29 @@ fn hasFieldSet(self: anytype) bool {
         if (@field(self, name) != null) return true;
     }
     return false;
+}
+
+// Parse two integers separated by a comma, e.g. "75,80"
+fn twoIntsParser(in: []const u8) std.fmt.ParseIntError!struct {
+    a: u32,
+    b: u32,
+} {
+    const comma = std.mem.indexOfScalar(u8, in, ',') orelse
+        return error.InvalidCharacter;
+
+    return .{
+        .a = try std.fmt.parseUnsigned(u32, in[0..comma], 10),
+        .b = try std.fmt.parseUnsigned(u32, in[comma + 1 ..], 10),
+    };
+}
+
+test "twoIntsParser" {
+    const res = try twoIntsParser("42,99");
+    try std.testing.expectEqual(42, res.a);
+    try std.testing.expectEqual(99, res.b);
+    try std.testing.expectError(std.fmt.ParseIntError.InvalidCharacter, twoIntsParser(""));
+    try std.testing.expectError(std.fmt.ParseIntError.InvalidCharacter, twoIntsParser("42"));
+    try std.testing.expectError(std.fmt.ParseIntError.InvalidCharacter, twoIntsParser("42,"));
+    try std.testing.expectError(std.fmt.ParseIntError.InvalidCharacter, twoIntsParser(",42"));
+    try std.testing.expectError(std.fmt.ParseIntError.InvalidCharacter, twoIntsParser("42-42"));
 }

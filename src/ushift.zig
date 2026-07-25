@@ -72,9 +72,37 @@ pub const Ushift = struct {
                 .cpu => self.cpu.print(),
                 .gpu => self.gpu.print(),
             },
-            .power_supply => pws.printPowerSupply(_gpa, _io) catch {
-                // TODO handle absence of battery or AC gracefully
-                // ie. on desktop
+            .power_supply => |props| switch (props) {
+                .print => {
+                    var ps = try pws.PowerSupply.init(_gpa, _io, false);
+                    defer ps.deinit(_gpa);
+                    if (ps.batteries.len == 0 and ps.aces.len == 0) {
+                        std.debug.print("no battery or AC adapter found\n", .{});
+                        return;
+                    }
+                    try ps.print(_io);
+                },
+                .set_charge_thresholds => |t| {
+                    try hasRoot();
+                    var ps = try pws.PowerSupply.init(_gpa, _io, false);
+                    defer ps.deinit(_gpa);
+
+                    if (ps.batteries.len == 0) return error.NoBatteryFound;
+
+                    const battery = if (t.bat_name) |bat|
+                        ps.getBattery(bat) orelse return error.InvalidBattery
+                    else
+                        &ps.batteries[0];
+                    battery.setChargeThreshold(_io, t.start, t.end) catch |err| {
+                        std.log.err("failed to set charge thresholds: {s}", .{@errorName(err)});
+                        return err;
+                    };
+                    std.debug.print("set battery '{s}' charge thresholds to {}-{}%\n", .{
+                        battery.name,
+                        t.start,
+                        t.end,
+                    });
+                },
             },
             .daemon => |flags| {
                 if (!flags.dry_run) try hasRoot();
@@ -149,7 +177,6 @@ pub const Ushift = struct {
 
 fn hasRoot() !void {
     if (std.os.linux.geteuid() != 0) {
-        std.log.err("root privileges missing", .{});
         return error.RootRequired;
     }
 }

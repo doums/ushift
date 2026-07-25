@@ -63,7 +63,11 @@ sudo ushift sav   # save (low power)
 
 ## Config file
 
-Default: `/etc/ushift/config.toml`
+The config is used to define the power profiles and battery settings.
+It is read by ushift when running in `laptop` mode (see below),
+as well by the `perf`, `bal`, and `sav` commands.
+
+Default location: `/etc/ushift/config.toml`
 
 ```toml
 ## Battery device name to be used in /sys/class/power_supply/
@@ -74,6 +78,12 @@ Default: `/etc/ushift/config.toml`
 # battery_poll_rate = 30
 ## Battery % at which 'save' profile activates
 # battery_low = 20
+## Battery charge thresholds (%) to limit max charge for battery longevity
+## Requires sysfs support (varies by hardware)
+# battery_start_charge_threshold = 80
+# battery_end_charge_threshold = 85
+## Restore configured charge thresholds when AC is unplugged (default: true)
+# restore_charge_thresholds_on_bat = true
 
 # See `ushift set -h` to get more information about the available
 # options
@@ -171,6 +181,21 @@ the service:
 ExecStart=/usr/bin/ushift laptop --config /path/to/config.toml
 ```
 
+## Battery care
+
+On supported hardware, ushift can set battery charge thresholds to
+reduce battery wear over time.
+
+When running in laptop mode, ushift applies the configured
+thresholds at startup (see [Config file](#config-file)).
+
+To apply thresholds manually:
+
+```sh
+# set charge thresholds to 80-85%
+sudo ushift pows -t 80,85
+```
+
 ## Example use cases
 
 #### Laptop with auto-switch profiles, power saving below 15% battery
@@ -179,6 +204,9 @@ Enable/start `ushift-laptop.service` with config:
 
 ```toml
 battery_low = 15 # %
+# set charge thresholds to 80-85%
+battery_start_charge_threshold = 80
+battery_end_charge_threshold = 85
 
 # on AC
 [performance]

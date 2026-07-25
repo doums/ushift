@@ -10,20 +10,26 @@ const DaemonProps = @import("cli.zig").DaemonProps;
 const UserConfig = @import("config.zig").UserConfig;
 const Cpu = @import("cpu.zig").Cpu;
 const Gpu = @import("gpu.zig").Gpu;
+const PowerSupply = @import("power_supply.zig").PowerSupply;
+const Battery = @import("power_supply.zig").Battery;
+const Ac = @import("power_supply.zig").Ac;
 
 pub const Daemon = struct {
     dry_run: bool = false,
     // ------
     cpu: *const Cpu,
     gpu: *const Gpu,
+    power_supply: pws.PowerSupply,
     // ------
-    bat: []u8, // sysfs device name
-    ac: []u8,
-    sysfs_cap_prefix: pws.BatteryCapacityPrefix,
+    bat: *const Battery,
+    ac: *const Ac,
     poll_timeout: u32,
     low_level: u32,
     performance_profile: *const Profile,
     balance_profile: *const Profile,
+    charge_thresh_start: ?u32,
+    charge_thresh_end: ?u32,
+    restore_charge_thresh_on_bat: bool,
     save_profile: ?*const Profile,
     // state
     ac_online: bool,
@@ -45,29 +51,38 @@ pub const Daemon = struct {
         const cfg = data.config;
         const flags = data.flags;
 
-        const ps = try pws.getPowerSupply(gpa, io, true);
-        var user_bat: ?[]u8 = null;
-        errdefer {
-            if (user_bat == null) gpa.free(ps.bat);
-            gpa.free(ps.ac);
-            if (user_bat) |v| gpa.free(v);
+        var ps = try PowerSupply.init(gpa, io, true);
+        errdefer ps.deinit(gpa);
+
+        if (ps.batteries.len == 0) {
+            std.log.err("no battery found", .{});
+            return error.NoBatteryFound;
+        }
+        if (ps.aces.len == 0) {
+            std.log.err("no AC adapter found", .{});
+            return error.NoAcFound;
         }
 
-        if (flags.bat_name orelse cfg.battery_name) |bat| {
-            if (!try pws.checkUserBattery(io, bat)) return error.InvalidUserBattery;
-            // let's clone it so we can free later without caring
-            user_bat = try gpa.dupe(u8, bat);
-            gpa.free(ps.bat);
-        }
-        const battery = user_bat orelse ps.bat;
-        const low_level = flags.bat_low orelse cfg.battery_low;
-        std.log.info("using battery: {s}", .{battery});
+        const battery = if (flags.bat_name orelse cfg.battery_name) |bat|
+            ps.getBattery(bat) orelse {
+                std.log.err("battery '{s}' not found", .{bat});
+                return error.InvalidUserBattery;
+            }
+        else
+            &ps.batteries[0];
+        std.log.info("using battery: {s}", .{battery.name});
 
-        const cap_prefix = try pws.getBatteryCapacityPrefix(io, battery);
-        std.log.debug("sysfs battery capacity prefix: {s}", .{@tagName(cap_prefix)});
+        try initBatChargeThresholds(io, .{
+            .battery = battery,
+            .start = cfg.battery_start_charge_threshold,
+            .end = cfg.battery_end_charge_threshold,
+            .dry_run = flags.dry_run,
+        });
 
         // init AC state
-        const ac_online = try pws.readAcOnline(io, ps.ac);
+        const ac = &ps.aces[0];
+        const ac_online = try ac.readOnline(io);
+        std.log.info("using AC: {s}", .{ac.name});
         std.log.debug("AC online: {}", .{ac_online});
 
         if (data.gpu.cards.len == 0) {
@@ -76,9 +91,10 @@ pub const Daemon = struct {
 
         var bat_cap: u32 = 100;
         var bat_low = false;
+        const low_level = flags.bat_low orelse cfg.battery_low;
         if (cfg.save) |_| {
             // init battery level state
-            bat_cap = try pws.readBatteryCapacity(io, battery, cap_prefix);
+            bat_cap = try battery.readCapacity(io);
             bat_low = bat_cap <= low_level;
             std.log.debug("battery low: {} (low level: {d}%)", .{
                 bat_low,
@@ -92,11 +108,14 @@ pub const Daemon = struct {
             .dry_run = flags.dry_run,
             .cpu = data.cpu,
             .gpu = data.gpu,
+            .power_supply = ps,
             .bat = battery,
-            .ac = ps.ac,
-            .sysfs_cap_prefix = cap_prefix,
+            .ac = ac,
             .poll_timeout = flags.poll_rate orelse cfg.battery_poll_rate,
             .low_level = low_level,
+            .charge_thresh_start = cfg.battery_start_charge_threshold,
+            .charge_thresh_end = cfg.battery_end_charge_threshold,
+            .restore_charge_thresh_on_bat = cfg.restore_charge_thresholds_on_bat,
             .performance_profile = &cfg.performance,
             .balance_profile = &cfg.balance,
             .save_profile = if (cfg.save) |*save| save else null,
@@ -150,16 +169,38 @@ pub const Daemon = struct {
                 std.log.info("AC online: {}", .{online});
                 self.ac_online = online;
                 if (self.save_profile) |_| try self.refreshBatteryLevel();
+
                 self.switchProfile(online, self.bat_low) catch |err| {
                     std.log.err("failed to switch profile: {s}", .{@errorName(err)});
                     return err;
                 };
+
+                if (self.restore_charge_thresh_on_bat and
+                    !online and
+                    self.bat.charge_threshold_prefix != null)
+                {
+                    if (self.dry_run) {
+                        std.log.info(
+                            "[DRY-RUN] would restore battery charge thresholds: start={?d}, end={?d}",
+                            .{ self.charge_thresh_start, self.charge_thresh_end },
+                        );
+                    } else {
+                        std.log.info("restoring battery charge thresholds", .{});
+                        self.bat.setChargeThreshold(
+                            _io,
+                            self.charge_thresh_start,
+                            self.charge_thresh_end,
+                        ) catch |err| {
+                            std.log.err("failed to restore battery charge thresholds: {s}", .{@errorName(err)});
+                        };
+                    }
+                }
             }
         }
     }
 
     fn handleTick(self: *Self) !void {
-        const capacity = try pws.readBatteryCapacity(_io, self.bat, self.sysfs_cap_prefix);
+        const capacity = try self.bat.readCapacity(_io);
         if (self.bat_cap != capacity) {
             std.log.debug("battery level: {d}% -> {d}%", .{ self.bat_cap, capacity });
             self.bat_cap = capacity;
@@ -201,16 +242,54 @@ pub const Daemon = struct {
     }
 
     fn refreshBatteryLevel(self: *Self) !void {
-        const level = try pws.readBatteryCapacity(_io, self.bat, self.sysfs_cap_prefix);
+        const level = try self.bat.readCapacity(_io);
         self.bat_cap = level;
         self.bat_low = level <= self.low_level;
     }
 
-    pub fn deinit(self: *const Self) void {
-        _gpa.free(self.bat);
-        _gpa.free(self.ac);
+    pub fn deinit(self: *Self) void {
+        self.power_supply.deinit(_gpa);
     }
 };
+
+fn initBatChargeThresholds(io: std.Io, data: struct {
+    battery: *const Battery,
+    start: ?u32,
+    end: ?u32,
+    dry_run: bool,
+}) !void {
+    const bat = data.battery;
+    const start = data.start;
+    const end = data.end;
+
+    if (start == null and end == null) return;
+
+    if (start) |s| if (s > 99 or s == 0)
+        return error.InvalidBatteryStartChargeThreshold;
+    if (end) |e| if (e > 100 or e == 0)
+        return error.InvalidBatteryEndChargeThreshold;
+    if (start) |s| if (end) |e|
+        if (s >= e)
+            return error.InvalidBatteryChargeThreshold;
+
+    if (bat.charge_threshold_prefix == null) {
+        std.log.warn(
+            "battery charge thresholds not supported for battery '{s}', ignoring",
+            .{bat.name},
+        );
+    } else if (data.dry_run) {
+        std.log.info(
+            "[DRY-RUN] would set battery '{s}' charge thresholds: start={?d}, end={?d}",
+            .{ bat.name, start, end },
+        );
+    } else {
+        std.log.info(
+            "setting battery '{s}' charge thresholds: start={?d}, end={?d}",
+            .{ bat.name, start, end },
+        );
+        try bat.setChargeThreshold(io, start, end);
+    }
+}
 
 // Install no-op handlers for SIGTERM and SIGINT so that delivering either signal
 // causes ppoll() to return EINTR (aka error.SignalInterrupt)
