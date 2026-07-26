@@ -36,10 +36,6 @@ jobs:
         run: |
           pacman -Syu --noconfirm
 
-      - name: Install libudev
-        run: |
-          pacman -S --noconfirm systemd-libs
-
       - name: Install Zig master
         uses: mlugg/setup-zig@v2
         with:
