@@ -6,7 +6,7 @@ const c = @import("udev");
 
 fn rc(code: c_int) !void {
     if (code < 0) {
-        const err: std.posix.E = @enumFromInt(-code);
+        const err: std.posix.E = @fromBackingInt(@intCast(-code));
         std.log.err("c error: {}", .{err});
         return error.Cerr;
     }
@@ -36,13 +36,20 @@ pub const Udev = struct {
         };
     }
 
-    pub fn getAcOnline(self: *Self) !?bool {
+    pub fn getAcOnline(self: *Self, ac_name: []const u8) !?bool {
         const dev = c.udev_monitor_receive_device(self.monitor) orelse
             return null;
         defer _ = c.udev_device_unref(dev);
 
         const action = c.udev_device_get_action(dev) orelse return null;
         if (!std.mem.eql(u8, std.mem.span(action), "change")) return null;
+        // ignore events from other power_supply devices,
+        // only the tracked AC device's events are relevant
+        const sysname = c.udev_device_get_sysname(dev) orelse return null;
+        if (!std.mem.eql(u8, std.mem.span(sysname), ac_name)) {
+            std.log.debug("ignoring udev event from '{s}' (not tracked AC '{s}')", .{ sysname, ac_name });
+            return null;
+        }
         const property = c.udev_device_get_property_value(dev, "POWER_SUPPLY_ONLINE") orelse
             return null;
         const val = std.mem.span(property);
@@ -51,7 +58,7 @@ pub const Udev = struct {
         } else if (std.mem.eql(u8, val, "0")) {
             return false;
         } else {
-            std.log.err("udev ac event unexpected value: '{s}'", .{ val });
+            std.log.err("udev ac event unexpected value: '{s}'", .{val});
             return error.UdevAcEventParse;
         }
     }

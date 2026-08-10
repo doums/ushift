@@ -164,9 +164,12 @@ pub const Daemon = struct {
             }
 
             // on udev event -> new AC state
-            const online = try udev.getAcOnline() orelse continue;
+            _ = try udev.getAcOnline(self.ac.name) orelse continue;
+            // re-read authoritative state from sysfs rather than trusting
+            // the value carried in the udev event
+            const online = try self.ac.readOnline(_io);
             if (self.ac_online != online) {
-                std.log.info("AC online: {}", .{online});
+                std.log.info("AC device '{s}' online -> {}", .{ self.ac.name, online });
                 self.ac_online = online;
                 if (self.save_profile) |_| try self.refreshBatteryLevel();
 
