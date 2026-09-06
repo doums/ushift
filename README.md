@@ -189,6 +189,18 @@ reduce battery wear over time.
 When running in laptop mode, ushift applies the configured
 thresholds at startup (see [Config file](#config-file)).
 
+Get current battery info:
+
+```sh
+> ushift pows
+[BAT0] (/sys/class/power_supply/BAT0)
+  capacity: 84%
+  status: not charging
+  health: 90%
+  charge thresholds: 80-85%
+[AC] online: yes (/sys/class/power_supply/AC)
+```
+
 To apply thresholds manually:
 
 ```sh

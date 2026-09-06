@@ -64,6 +64,10 @@ pub const BatteryChargeThresholdPrefix = enum {
 pub const Battery = struct {
     name: []u8,
     capacity_prefix: BatteryCapacityPrefix,
+    // https://kernel.org/doc/html/next/admin-guide/abi-testing.html#abi-sys-class-power-supply-supply-name-state-of-health
+    // new kernels expose state_of_health attribute
+    has_state_of_health: bool,
+    has_full_design: bool,
     // no prefix means charge threshold not supported
     charge_threshold_prefix: ?BatteryChargeThresholdPrefix,
 
@@ -75,11 +79,15 @@ pub const Battery = struct {
         name: []const u8,
     ) !Self {
         const cap_prefix = try getBatteryCapacityPrefix(io, name);
+        const has_state_of_health = try checkStateOfHealthAttribute(io, name);
+        const has_full_design = try checkFullDesignAttribute(cap_prefix, io, name);
         const charge_prefix = try getBatteryChargeThresholdPrefix(io, name);
 
         return Battery{
             .name = try gpa.dupe(u8, name),
             .capacity_prefix = cap_prefix,
+            .has_state_of_health = has_state_of_health,
+            .has_full_design = has_full_design,
             .charge_threshold_prefix = charge_prefix,
         };
     }
@@ -152,6 +160,36 @@ pub const Battery = struct {
         return error.SysfsBatStatusParse;
     }
 
+    // returns null if the battery does not expose health information
+    pub fn readHealth(self: *const Self, io: std.Io) !?u32 {
+        if (self.has_state_of_health) {
+            var path_buf: [256]u8 = undefined;
+            var buf: [32]u8 = undefined;
+
+            const path = try std.fmt.bufPrint(&path_buf, "{s}/{s}/state_of_health", .{ power_supply_sysfs, self.name });
+            const val = try fs.readLine(32, io, path, &buf, .{}) orelse
+                return error.SysfsBatHealthRead;
+            const health = std.fmt.parseInt(u32, val, 10) catch
+                return error.SysfsBatHealthParse;
+            if (health > 100) return error.SysfsBatHealthOutOfRange;
+            return health;
+        }
+
+        if (self.has_full_design) {
+            const full: f64 = @floatFromInt(try readBatteryCapacityKind(.full, io, self.name, self.capacity_prefix));
+            const full_design: f64 = @floatFromInt(try readBatteryCapacityKind(.full_design, io, self.name, self.capacity_prefix));
+
+            if (full_design == 0) {
+                std.log.err("battery '{s}' has full design capacity of 0", .{self.name});
+                return error.SysfsBatCapFullDesignZero;
+            }
+
+            return @min(@as(u32, @round((full * 100) / full_design)), 100);
+        }
+
+        return null;
+    }
+
     pub fn setChargeThreshold(
         self: *const Self,
         io: std.Io,
@@ -189,6 +227,14 @@ pub const Battery = struct {
             cap,
             status.print(),
         });
+
+        const health = try self.readHealth(io);
+        var health_buf: [16]u8 = undefined;
+        const health_str = if (health) |value|
+            try std.fmt.bufPrint(&health_buf, "{d}%", .{value})
+        else
+            "not supported";
+        try w.print("  health: {s}\n", .{health_str});
 
         if (self.charge_threshold_prefix != null) {
             const start = try self.readChargeThreshold(io, .start);
@@ -353,6 +399,22 @@ fn getBatteryCapacityPrefix(io: std.Io, bat: []const u8) !BatteryCapacityPrefix 
     return error.SysfsBatCapNotFound;
 }
 
+fn checkStateOfHealthAttribute(io: std.Io, bat: []const u8) !bool {
+    var path_buf: [256]u8 = undefined;
+    const path = try std.fmt.bufPrint(&path_buf, "{s}/{s}/state_of_health", .{ power_supply_sysfs, bat });
+    return fs.fileExists(io, path);
+}
+
+fn checkFullDesignAttribute(prefix: BatteryCapacityPrefix, io: std.Io, bat: []const u8) !bool {
+    var path_buf: [256]u8 = undefined;
+    const path = try std.fmt.bufPrint(&path_buf, "{s}/{s}/{s}_full_design", .{
+        power_supply_sysfs,
+        bat,
+        @tagName(prefix),
+    });
+    return fs.fileExists(io, path);
+}
+
 fn checkBatteryChargeThresholdAttribute(comptime prefix: BatteryChargeThresholdPrefix, io: std.Io, bat: []const u8) !bool {
     var path_buf: [256]u8 = undefined;
 
@@ -377,7 +439,7 @@ fn getBatteryChargeThresholdPrefix(io: std.Io, bat: []const u8) !?BatteryChargeT
 }
 
 fn readBatteryCapacityKind(
-    comptime kind: enum { full, now },
+    comptime kind: enum { full, now, full_design },
     io: std.Io,
     bat: []const u8,
     prefix: BatteryCapacityPrefix,
