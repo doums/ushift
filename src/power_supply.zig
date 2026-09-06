@@ -18,6 +18,25 @@ pub const BatteryChargeThresholdKind = enum {
     end,
 };
 
+// https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/linux/power_supply.h#n36
+pub const BatteryStatus = enum {
+    unknown,
+    charging,
+    discharging,
+    not_charging,
+    full,
+
+    pub fn print(self: BatteryStatus) []const u8 {
+        return switch (self) {
+            .unknown => "unknown",
+            .charging => "charging",
+            .discharging => "discharging",
+            .not_charging => "not charging",
+            .full => "full",
+        };
+    }
+};
+
 // sysfs battery charge threshold properties
 // - charge_control_start_threshold, charge_control_end_threshold
 // - charge_start_threshold, charge_stop_threshold (older kernels)
@@ -113,6 +132,26 @@ pub const Battery = struct {
             return error.SysfsBatChargeThresholdParse;
     }
 
+    pub fn readStatus(self: *const Self, io: std.Io) !BatteryStatus {
+        var path_buf: [256]u8 = undefined;
+        var buf: [32]u8 = undefined;
+
+        const path = try std.fmt.bufPrint(&path_buf, "{s}/{s}/status", .{ power_supply_sysfs, self.name });
+        const val = try fs.readLine(32, io, path, &buf, .{}) orelse
+            return error.SysfsBatStatusRead;
+
+        // https://kernel.org/doc/html/next/admin-guide/abi-testing.html#abi-sys-class-power-supply-supply-name-status
+        // Kernel values are case-sensitive
+        if (std.mem.eql(u8, val, "Unknown")) return .unknown;
+        if (std.mem.eql(u8, val, "Charging")) return .charging;
+        if (std.mem.eql(u8, val, "Discharging")) return .discharging;
+        if (std.mem.eql(u8, val, "Not charging")) return .not_charging;
+        if (std.mem.eql(u8, val, "Full")) return .full;
+
+        std.log.err("battery '{s}' status attribute unexpected value '{s}'", .{ self.name, val });
+        return error.SysfsBatStatusParse;
+    }
+
     pub fn setChargeThreshold(
         self: *const Self,
         io: std.Io,
@@ -136,12 +175,20 @@ pub const Battery = struct {
         var msg_buf: [512]u8 = undefined;
         var w = std.Io.Writer.fixed(&msg_buf);
         const cap = try self.readCapacity(io);
+        const status = try self.readStatus(io);
 
         try w.print(
             \\[{s}] ({s}/{s})
             \\  capacity: {d}% 
+            \\  status: {s}
             \\
-        , .{ self.name, power_supply_sysfs, self.name, cap });
+        , .{
+            self.name,
+            power_supply_sysfs,
+            self.name,
+            cap,
+            status.print(),
+        });
 
         if (self.charge_threshold_prefix != null) {
             const start = try self.readChargeThreshold(io, .start);

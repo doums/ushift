@@ -49,7 +49,45 @@ pub const Ushift = struct {
             },
             .set => |props| {
                 try hasRoot();
-                err_hit = self.runBatch(&props);
+
+                if (props.op_mode) |mode| self.cpu.setPstateOpMode(mode) catch |err| {
+                    std.log.err("failed to set P-state operation mode: {s}", .{@errorName(err)});
+                    err_hit += 1;
+                };
+                if (props.scaling_governor) |gov| self.cpu.setScalingGovernor(gov) catch |err| {
+                    std.log.err("failed to set scaling governor: {s}", .{@errorName(err)});
+                    err_hit += 1;
+                };
+                if (props.energy_perf_policy) |policy| self.cpu.setEnergyPerformancePolicy(policy) catch |err| {
+                    std.log.err("failed to set energy performance policy: {s}", .{@errorName(err)});
+                    err_hit += 1;
+                };
+                if (props.turbo_boost) |tb| self.cpu.setTurboBoost(tb) catch |err| {
+                    std.log.err("failed to set turbo boost: {s}", .{@errorName(err)});
+                    err_hit += 1;
+                };
+                if (props.hwp_dyn_boost) |hwp| self.cpu.setIntelDynBoost(hwp) catch |err| {
+                    std.log.err("failed to set Intel HWP dynamic boost: {s}", .{@errorName(err)});
+                    err_hit += 1;
+                };
+                if (props.intel_xe_power_profile) |p|
+                    self.gpu.driverAction(
+                        .xe,
+                        .{ .set = .{ .xe = p.profile } },
+                        p.gpu_index,
+                    ) catch |err| {
+                        std.log.err("failed to set Intel Xe power profile: {s}", .{@errorName(err)});
+                        err_hit += 1;
+                    };
+                if (props.radeon_dpm_perf_level) |p|
+                    self.gpu.driverAction(
+                        .amd,
+                        .{ .set = .{ .amd = p.level } },
+                        p.gpu_index,
+                    ) catch |err| {
+                        std.log.err("failed to set AMD Radeon DPM performance level: {s}", .{@errorName(err)});
+                        err_hit += 1;
+                    };
             },
             .set_profile => |opt| {
                 try hasRoot();
@@ -122,51 +160,6 @@ pub const Ushift = struct {
         } else if (err_hit > 1) {
             return error.CommandErrors;
         }
-    }
-
-    fn runBatch(self: *const Self, props: *const cli.SetCpuProps) usize {
-        var err_hit: usize = 0;
-
-        if (props.op_mode) |mode| self.cpu.setPstateOpMode(mode) catch |err| {
-            std.log.err("failed to set P-state operation mode: {s}", .{@errorName(err)});
-            err_hit += 1;
-        };
-        if (props.scaling_governor) |gov| self.cpu.setScalingGovernor(gov) catch |err| {
-            std.log.err("failed to set scaling governor: {s}", .{@errorName(err)});
-            err_hit += 1;
-        };
-        if (props.energy_perf_policy) |policy| self.cpu.setEnergyPerformancePolicy(policy) catch |err| {
-            std.log.err("failed to set energy performance policy: {s}", .{@errorName(err)});
-            err_hit += 1;
-        };
-        if (props.turbo_boost) |tb| self.cpu.setTurboBoost(tb) catch |err| {
-            std.log.err("failed to set turbo boost: {s}", .{@errorName(err)});
-            err_hit += 1;
-        };
-        if (props.hwp_dyn_boost) |hwp| self.cpu.setIntelDynBoost(hwp) catch |err| {
-            std.log.err("failed to set Intel HWP dynamic boost: {s}", .{@errorName(err)});
-            err_hit += 1;
-        };
-        if (props.intel_xe_power_profile) |p|
-            self.gpu.driverAction(
-                .xe,
-                .{ .set = .{ .xe = p.profile } },
-                p.gpu_index,
-            ) catch |err| {
-                std.log.err("failed to set Intel Xe power profile: {s}", .{@errorName(err)});
-                err_hit += 1;
-            };
-        if (props.radeon_dpm_perf_level) |p|
-            self.gpu.driverAction(
-                .amd,
-                .{ .set = .{ .amd = p.level } },
-                p.gpu_index,
-            ) catch |err| {
-                std.log.err("failed to set AMD Radeon DPM performance level: {s}", .{@errorName(err)});
-                err_hit += 1;
-            };
-
-        return err_hit;
     }
 
     pub fn deinit(self: *Self) void {
